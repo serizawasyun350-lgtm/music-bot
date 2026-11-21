@@ -1,4 +1,6 @@
 import os
+import sys
+import subprocess
 import asyncio
 from collections import deque
 import discord
@@ -7,22 +9,30 @@ from discord.ext import commands, tasks
 import yt_dlp
 from keep_alive import keep_alive, bot_status
 
+# 起動時にyt-dlpを強制的に最新版へアップデート（YouTube仕様変更対策）
+try:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
+except Exception as e:
+    print(f"yt-dlpアップデートスキップ: {e}")
+
 # Botの設定
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# yt-dlp と FFmpeg のオプション設定（iOS/Web偽装でブロック回避）
+# cookies.txtが存在するかチェックして安全に読み込む
+COOKIE_FILE = 'cookies.txt' if os.path.exists('cookies.txt') else None
+
+# yt-dlp と FFmpeg のオプション設定
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
     'no_warnings': True,
     'source_address': '0.0.0.0',
-    'cookiefile': 'cookies.txt',
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios', 'web'],
+            'player_client': ['tv', 'mweb', 'web'],
         }
     },
 }
@@ -32,13 +42,16 @@ YTDL_PLAYLIST_OPTIONS = {
     'quiet': True,
     'no_warnings': True,
     'playlistend': 50,
-    'cookiefile': 'cookies.txt',
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios', 'web']
+            'player_client': ['tv', 'mweb', 'web'],
         }
     },
 }
+
+if COOKIE_FILE:
+    YTDL_OPTIONS['cookiefile'] = COOKIE_FILE
+    YTDL_PLAYLIST_OPTIONS['cookiefile'] = COOKIE_FILE
 
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -52,10 +65,12 @@ ytdl_playlist = yt_dlp.YoutubeDL(YTDL_PLAYLIST_OPTIONS)
 guild_queues = {}
 current_songs = {}
 
+
 def get_queue(guild_id: int) -> deque:
     if guild_id not in guild_queues:
         guild_queues[guild_id] = deque()
     return guild_queues[guild_id]
+
 
 def sync_web_status():
     """Webサーバー側のステータス辞書を最新状態に同期"""
@@ -74,9 +89,11 @@ def sync_web_status():
             all_queued.append(item["title"])
     bot_status["queue"] = all_queued[:20]
 
+
 @tasks.loop(seconds=10)
 async def update_web_status_task():
     sync_web_status()
+
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -92,6 +109,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         if 'entries' in data:
             data = data['entries'][0]
         return cls(discord.FFmpegPCMAudio(data['url'], **FFMPEG_OPTIONS), data=data)
+
 
 async def play_next(guild: discord.Guild, text_channel: discord.abc.Messageable = None):
     queue = get_queue(guild.id)
@@ -126,13 +144,14 @@ async def play_next(guild: discord.Guild, text_channel: discord.abc.Messageable 
         voice_client.play(player, after=after_playing)
 
         if text_channel:
-            await text_channel.send(f"🎶 **次の曲を再生:** `{player.title}`")
+            await text_channel.send(f"🎶 **再生開始:** `{player.title}`")
 
     except Exception as e:
         print(f"トラック取得エラー ({next_track['title']}): {e}")
         if text_channel:
-            await text_channel.send(f"⚠️ `{next_track['title']}` の読み込みに失敗したためスキップします。")
+            await text_channel.send(f"⚠️ `{next_track['title']}` の読み込みに失敗したためスキップします。\n理由: `{e}`")
         await play_next(guild, text_channel)
+
 
 @bot.event
 async def on_ready():
@@ -146,6 +165,7 @@ async def on_ready():
     if not update_web_status_task.is_running():
         update_web_status_task.start()
     sync_web_status()
+
 
 # /play コマンド
 @bot.tree.command(name="play", description="YouTubeのURL・プレイリスト・検索ワードで音楽を再生します")
@@ -169,10 +189,8 @@ async def play(interaction: discord.Interaction, search: str):
         queue = get_queue(interaction.guild.id)
         loop = asyncio.get_event_loop()
 
-        # 検索ワードかURLかの判定（URLでない場合は強制的に ytsearch: をつける）
-        query = search
-        if not ("http://" in search or "https://" in search):
-            query = f"ytsearch:{search}"
+        # URLでない場合は検索クエリに変換
+        query = search if ("http://" in search or "https://" in search) else f"ytsearch:{search}"
 
         # プレイリスト判定
         if "list=" in search and ("youtube.com" in search or "youtu.be" in search):
@@ -217,6 +235,7 @@ async def play(interaction: discord.Interaction, search: str):
         print(f"Playコマンドエラー: {e}")
         await interaction.followup.send(f"⚠️ エラーが発生しました:\n```{e}```")
 
+
 # /nowplaying コマンド
 @bot.tree.command(name="nowplaying", description="現在の再生状況と次の曲を表示します")
 async def nowplaying(interaction: discord.Interaction):
@@ -240,6 +259,7 @@ async def nowplaying(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
+
 # /queue コマンド
 @bot.tree.command(name="queue", description="現在の再生待ちリスト（キュー）を表示します")
 async def show_queue(interaction: discord.Interaction):
@@ -247,4 +267,68 @@ async def show_queue(interaction: discord.Interaction):
     current = current_songs.get(guild_id)
     queue = get_queue(guild_id)
 
-... (他のコマンドはそのまま維持)
+    embed = discord.Embed(title="📋 再生待ちリスト (キュー)", color=discord.Color.blurple())
+    embed.add_field(name="🎶 現在再生中", value=current if current else "なし", inline=False)
+
+    if queue:
+        lines = [f"`{i+1}.` {item['title']}" for i, item in enumerate(list(queue)[:15])]
+        if len(queue) > 15:
+            lines.append(f"...ほか **{len(queue) - 15}曲**")
+        embed.add_field(name=f"待機中 ({len(queue)}曲)", value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(name="待機中", value="キューは空です", inline=False)
+
+    await interaction.response.send_message(embed=embed)
+
+
+# /skip コマンド
+@bot.tree.command(name="skip", description="再生中の曲をスキップして次の曲を再生します")
+async def skip(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+    if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+        voice_client.stop()
+        await interaction.response.send_message("⏭️ 曲をスキップしました。")
+    else:
+        await interaction.response.send_message("❌ スキップできる曲が再生されていません。", ephemeral=True)
+
+
+# /stop コマンド
+@bot.tree.command(name="stop", description="再生を停止し、キューをすべて削除します")
+async def stop(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+    voice_client = interaction.guild.voice_client
+    queue = get_queue(guild_id)
+    queue.clear()
+    current_songs.pop(guild_id, None)
+    sync_web_status()
+
+    if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
+        voice_client.stop()
+        await interaction.response.send_message("⏹️ 再生を停止し、待機リストを空にしました。")
+    else:
+        await interaction.response.send_message("🗑️ 待機リストを空にしました。")
+
+
+# /leave コマンド
+@bot.tree.command(name="leave", description="Botをボイスチャンネルから切断します")
+async def leave(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+    voice_client = interaction.guild.voice_client
+    get_queue(guild_id).clear()
+    current_songs.pop(guild_id, None)
+    sync_web_status()
+
+    if voice_client:
+        await voice_client.disconnect()
+        await interaction.response.send_message("👋 ボイスチャンネルから切断しました。")
+    else:
+        await interaction.response.send_message("❌ ボイスチャンネルに接続していません。", ephemeral=True)
+
+
+# Webサーバー起動 & Bot起動
+keep_alive()
+TOKEN = os.environ.get("DISCORD_TOKEN")
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("エラー: 環境変数 DISCORD_TOKEN が設定されていません。")
