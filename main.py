@@ -11,7 +11,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# yt-dlp と FFmpeg のオプション設定
+# 単曲ストリーミング取得用オプション
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -19,7 +19,9 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
-    'cookiefile': 'cookies.txt',  # ← 追加：クッキーファイルを使用する
+    'cookiefile': 'cookies.txt',
+    # ↓追加：AndroidやWebクライアントを偽装してブロックを回避する
+    'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
 }
 
 # プレイリスト高速展開用オプション
@@ -28,7 +30,9 @@ YTDL_PLAYLIST_OPTIONS = {
     'quiet': True,
     'no_warnings': True,
     'playlistend': 50,
-    'cookiefile': 'cookies.txt',  # ← 追加：クッキーファイルを使用する
+    'cookiefile': 'cookies.txt',
+    # ↓追加：プレイリスト側も同様に設定
+    'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
