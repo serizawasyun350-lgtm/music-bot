@@ -78,36 +78,72 @@ async def on_ready():
     if not update_web_status.is_running():
         update_web_status.start()
 
-# /play コマンド
-@bot.tree.command(name="play", description="YouTubeのURLまたは検索ワードで音楽を再生します")
-@app_commands.describe(search="YouTubeのURLまたは曲名")
+# /play コマンド（単曲・検索・プレイリスト対応 ＆ 読み込み中フリーズ防止対策）
+@bot.tree.command(name="play", description="YouTubeのURL・プレイリスト・検索ワードで音楽を再生します")
+@app_commands.describe(search="YouTubeのURL、プレイリストURL、または検索ワード")
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
         await interaction.response.send_message("❌ 先にボイスチャンネルに参加してください！", ephemeral=True)
         return
 
-    await interaction.response.defer()
-
-    channel = interaction.user.voice.channel
-    voice_client = interaction.guild.voice_client
-
-    # 未接続なら接続、別チャンネルにいたら移動
-    if not voice_client:
-        voice_client = await channel.connect()
-    elif voice_client.channel != channel:
-        await voice_client.move_to(channel)
-
-    # すでに再生中なら停止して新しい曲を流す
-    if voice_client.is_playing():
-        voice_client.stop()
+    # まず確実に「読み込み中」の状態を安全に受け付ける
+    await interaction.response.defer(thinking=True)
 
     try:
-        player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
-        voice_client.play(player, after=lambda e: print(f'再生エラー: {e}') if e else None)
-        bot_status["playing"] = player.title
-        await interaction.followup.send(f"🎶 **再生開始:** `{player.title}`")
+        channel = interaction.user.voice.channel
+        voice_client = interaction.guild.voice_client
+
+        if not voice_client:
+            voice_client = await channel.connect()
+        elif voice_client.channel != channel:
+            await voice_client.move_to(channel)
+
+        queue = get_queue(interaction.guild.id)
+        loop = asyncio.get_event_loop()
+
+        # プレイリストURLかどうかの判定
+        if "list=" in search and ("youtube.com" in search or "youtu.be" in search):
+            data = await loop.run_in_executor(None, lambda: ytdl_playlist.extract_info(search, download=False))
+            if 'entries' in data and data['entries']:
+                added_count = 0
+                for entry in data['entries']:
+                    if not entry:
+                        continue
+                    video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+                    title = entry.get('title') or "タイトル不明"
+                    queue.append({"title": title, "url": video_url})
+                    added_count += 1
+
+                sync_web_status()
+                playlist_title = data.get('title', 'YouTubeプレイリスト')
+                await interaction.followup.send(f"📑 **プレイリスト追加:** `{playlist_title}` から **{added_count}曲** をキューに追加しました！")
+
+                if not voice_client.is_playing() and not voice_client.is_paused():
+                    await play_next(interaction.guild, interaction.channel)
+                return
+
+        # 単曲または検索ワードの処理
+        info = await loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
+        if 'entries' in info:
+            info = info['entries'][0]
+
+        track = {
+            "title": info.get('title', search),
+            "url": info.get('webpage_url') or search
+        }
+        queue.append(track)
+        sync_web_status()
+
+        if not voice_client.is_playing() and not voice_client.is_paused():
+            await interaction.followup.send(f"🎶 **再生準備中:** `{track['title']}`")
+            await play_next(interaction.guild, interaction.channel)
+        else:
+            await interaction.followup.send(f"➕ **キューに追加 ({len(queue)}番目):** `{track['title']}`")
+
     except Exception as e:
-        await interaction.followup.send(f"⚠️ 再生に失敗しました: `{e}`")
+        # 万が一エラーが起きても、ここで必ず「読み込み中」を解除してエラー内容を伝える
+        print(f"Playコマンドエラー: {e}")
+        await interaction.followup.send(f"⚠️ エラーが発生しました:\n```{e}```")
 
 # /stop コマンド
 @bot.tree.command(name="stop", description="再生中の音楽を停止します")
