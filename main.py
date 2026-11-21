@@ -21,8 +21,13 @@ YTDL_OPTIONS = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'cookiefile': 'cookies.txt',
-    # ↓ ここを ios や tv に変更する
-    'extractor_args': {'youtube': {'player_client': ['ios', 'tv', 'web']}},
+    # ↓ iOSおよびWebクライアントを組み合わせてブロックを回避
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['ios', 'web'],
+            'skip': ['hls', 'dash']
+        }
+    },
 }
 
 # プレイリスト高速展開用オプション
@@ -32,10 +37,12 @@ YTDL_PLAYLIST_OPTIONS = {
     'no_warnings': True,
     'playlistend': 50,
     'cookiefile': 'cookies.txt',
-    # ↓ 同様に変更する
-    'extractor_args': {'youtube': {'player_client': ['ios', 'tv', 'web']}},
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['ios', 'web']
+        }
+    },
 }
-
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
