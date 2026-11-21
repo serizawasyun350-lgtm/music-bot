@@ -10,7 +10,7 @@ from keep_alive import keep_alive, bot_status
 # Botの設定
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 # yt-dlp と FFmpeg のオプション設定（iOS/Web偽装でブロック回避）
 YTDL_OPTIONS = {
