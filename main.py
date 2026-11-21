@@ -12,7 +12,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# yt-dlp と FFmpeg のオプション設定（ブロック回避・Android偽装含む）
+# 単曲ストリーミング取得用オプション
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -21,16 +21,19 @@ YTDL_OPTIONS = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'cookiefile': 'cookies.txt',
-    'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+    # ↓ ここを ios や tv に変更する
+    'extractor_args': {'youtube': {'player_client': ['ios', 'tv', 'web']}},
 }
 
+# プレイリスト高速展開用オプション
 YTDL_PLAYLIST_OPTIONS = {
     'extract_flat': True,
     'quiet': True,
     'no_warnings': True,
     'playlistend': 50,
     'cookiefile': 'cookies.txt',
-    'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+    # ↓ 同様に変更する
+    'extractor_args': {'youtube': {'player_client': ['ios', 'tv', 'web']}},
 }
 
 FFMPEG_OPTIONS = {
